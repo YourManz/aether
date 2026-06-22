@@ -7,6 +7,23 @@ files on your PATH), marks you've really left on the world (a readable chest,
 a calmed process, an opened directory). To gain a level you must genuinely
 change the world — and if you did it by "cheating" with chmod, well, you
 learned chmod. The deed is real either way.
+
+Deeds come in two kinds, and they are reconciled differently:
+
+  * ACTS are irreversible facts of your biography — a spell learned onto your
+    PATH, a chest broken open, a room first entered, regalia donned. Once
+    earned they are *monotonic*: persisted to ``state/deeds`` and never lost,
+    because re-locking a chest you already read can't un-teach you ``chmod``.
+
+  * STATES are live conditions of the world that must be *maintained* — the
+    wraith being calm, the Hollow standing open. These are never persisted.
+    They are recomputed every tick straight from the machine and count toward
+    your standing *only while they are true*. Sever the river and the wraith
+    rages, the Hollow re-bars, and that prestige genuinely drains away.
+
+Your effective standing (and thus XP) is ``acts + live states``. This keeps
+the promise above honest: you cannot hold a calm-wraith's credit while a
+furious one stands in front of you.
 """
 import os
 
@@ -18,8 +35,13 @@ WORLD = os.path.join(ROOT, "world")
 GLADE = os.path.join(WORLD, "glade")
 REGALIA = os.path.join(STATE, "regalia")
 DEEDS_F = os.path.join(STATE, "deeds")
+LIVE_F = os.path.join(STATE, "live")  # snapshot of live states last tick
 GOLD_F = os.path.join(STATE, "gold")
 CLAIM_F = os.path.join(STATE, "level_claimed")
+
+# World-state deeds: true only while the machine currently says so. Everything
+# else is an act — an irreversible fact of your biography.
+STATE_DEEDS = {"calm:wraith", "open:hollow"}
 
 # (level, title, xp threshold)
 LEVELS = [
@@ -38,6 +60,12 @@ DEED_TITLES = {
     "enter:hollow": "Walked into the Hollow",
 }
 
+# What it reads like when a live world-state slips away again.
+DEED_LOST_TITLES = {
+    "calm:wraith": "the moss-wraith thirsts again — its calm slips away",
+    "open:hollow": "the Hollow seals shut once more",
+}
+
 
 def _read(p, default=""):
     try:
@@ -54,14 +82,31 @@ def _read_int(p, default=0):
         return default
 
 
-def load_deeds():
-    return [d for d in _read(DEEDS_F).splitlines() if d.strip()]
+def is_state_deed(d):
+    return d in STATE_DEEDS
 
 
-def save_deeds(deeds):
+def load_acts():
+    """Persisted, monotonic act-deeds. Any live-state deeds frozen into the
+    file by an older save are filtered out, so old worlds migrate cleanly."""
+    return [d for d in _read(DEEDS_F).splitlines()
+            if d.strip() and not is_state_deed(d)]
+
+
+def save_acts(acts):
     os.makedirs(STATE, exist_ok=True)
     with open(DEEDS_F, "w") as f:
-        f.write(("\n".join(deeds) + "\n") if deeds else "")
+        f.write(("\n".join(acts) + "\n") if acts else "")
+
+
+def live_states():
+    """World-state deeds true *right now* — recomputed, never persisted."""
+    return sorted(d for d in detect_deeds() if is_state_deed(d))
+
+
+def current_deeds():
+    """Effective standing: monotonic acts + live world-states."""
+    return load_acts() + live_states()
 
 
 def deed_value(d):
@@ -86,6 +131,10 @@ def deed_title(d):
     if d.startswith("regalia:"):
         return "Donned the %s" % d.split(":", 1)[1]
     return d
+
+
+def deed_lost_title(d):
+    return DEED_LOST_TITLES.get(d, "the world shifts beneath you")
 
 
 def xp_from(deeds):
@@ -158,25 +207,54 @@ def detect_deeds():
 
 
 def grant(deed):
-    """Record a deed the filesystem can't prove on its own (e.g. entering a
-    room). Returns True if it was newly granted."""
-    have = load_deeds()
-    if deed in have:
+    """Record an act the filesystem can't prove on its own (e.g. entering a
+    room). Always an act — states are never granted. Returns True if newly
+    granted."""
+    acts = load_acts()
+    if deed in acts:
         return False
-    have.append(deed)
-    save_deeds(have)
+    acts.append(deed)
+    save_acts(acts)
     return True
 
 
+def _read_live_snapshot():
+    return set(d for d in _read(LIVE_F).splitlines() if d.strip())
+
+
+def _write_live_snapshot(states):
+    os.makedirs(STATE, exist_ok=True)
+    with open(LIVE_F, "w") as f:
+        f.write(("\n".join(sorted(states)) + "\n") if states else "")
+
+
 def reconcile():
-    """Grant any newly-earned deeds. Returns the list of new deed keys."""
-    have = load_deeds()
-    haveset = set(have)
-    newly = sorted(d for d in detect_deeds() if d not in haveset)
-    if newly:
-        have.extend(newly)
-        save_deeds(have)
-    return newly
+    """Reconcile reality into progression.
+
+    Acts are persisted monotonically; live world-states are diffed against the
+    previous tick's snapshot so transitions can be narrated. Returns a tuple
+    ``(new_acts, gained_states, lost_states)`` of deed keys.
+    """
+    detected = detect_deeds()
+
+    # Acts — monotonic. Persist any newly proven, and migrate the file if it
+    # still carries legacy state-deeds frozen in by an older version.
+    raw = [d for d in _read(DEEDS_F).splitlines() if d.strip()]
+    acts = [d for d in raw if not is_state_deed(d)]
+    haveset = set(acts)
+    new_acts = sorted(d for d in detected
+                      if not is_state_deed(d) and d not in haveset)
+    if new_acts or len(acts) != len(raw):
+        save_acts(acts + new_acts)
+
+    # States — live. Diff against the last snapshot for gained/lost narration.
+    now = {d for d in detected if is_state_deed(d)}
+    prev = _read_live_snapshot()
+    gained = sorted(now - prev)
+    lost = sorted(prev - now)
+    if gained or lost:
+        _write_live_snapshot(now)
+    return new_acts, gained, lost
 
 
 def level_for(xp):
@@ -211,9 +289,12 @@ def bar(xp, width=12):
 
 
 def claim_level_rewards():
-    """Award gold for each new level since last claim.
+    """Award gold for each new level since last claim. Uses a high-water mark
+    (``level_claimed`` only ever rises), so a level reached on a live state you
+    later let lapse still pays out exactly once — and can't be re-farmed by
+    oscillating that state.
     Returns (gold_delta, [new level tuples])."""
-    xp = xp_from(load_deeds())
+    xp = xp_from(current_deeds())
     cur = level_for(xp)
     claimed = _read_int(CLAIM_F, 1)
     if cur[0] <= claimed:

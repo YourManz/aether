@@ -50,17 +50,34 @@ Your standing is *reconciled* from the actual state of the machine — see
 `engine/progress.py`. You don't grind XP; you earn **deeds** by genuinely
 changing the world, and each deed is worth XP:
 
-- `loot:chest` — the chest is readable (you `chmod`'d it)
+Deeds come in two kinds, reconciled differently:
+
+**Acts** — irreversible facts of your biography. Once earned they're *monotonic*
+(kept forever), because re-locking a chest you already read can't un-teach you
+`chmod`:
+- `loot:chest` — you broke the barred chest open
 - `learn:<spell>` — an executable spell sits on your PATH
-- `calm:wraith` / `open:hollow` — the wraith process is calm / the dir is open
 - `enter:hollow` — you walked in
 - `regalia:<name>` — a package is installed
 
+**States** — live conditions of the world you must *maintain*. They count toward
+your standing **only while true**, recomputed every tick straight from the
+machine and never persisted:
+- `calm:wraith` — the wraith process is calm *right now*
+- `open:hollow` — the Hollow's directory is open *right now*
+
+So sever the river and the wraith rages, the Hollow re-bars, and that prestige
+genuinely drains away — you can't hold a calm-wraith's credit while a furious
+one stands in front of you. (See `engine/progress.py`.)
+
 XP rolls up into **levels** (Apprentice → … → Compiler-Witch); each level-up
 pays out gold, which you spend on more spells/regalia — closing the loop. Open
-your sheet with `character`. Because deeds are read from real permissions and
-real processes, you literally cannot level without doing the thing (and if you
-"cheat" with `chmod`, congratulations — you learned `chmod`).
+your sheet with `character`. Gold is paid against a **high-water mark**, so a
+level you reach on a state you later let lapse still pays exactly once — letting
+a state drain can de-level you, but you can't re-farm gold by oscillating it.
+Because deeds are read from real permissions and real processes, you literally
+cannot level without doing the thing (and if you "cheat" with `chmod`,
+congratulations — you learned `chmod`).
 
 ## Design notes (for future me)
 
