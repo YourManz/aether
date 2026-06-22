@@ -191,6 +191,20 @@ def character():
     print()
 
 
+def character_view():
+    """Full-screen living sheet on a real terminal; the inline sheet when
+    piped or non-interactive (e.g. the smoke tests)."""
+    import sys
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            import sheet_tui
+            sheet_tui.show()
+            return
+        except Exception as e:  # noqa: BLE001 — never let the sheet kill the game
+            print(RE("(the full sheet faltered: %s — the plain one, then)" % e))
+    character()
+
+
 # ── movement / passthrough ────────────────────────────────────────────────
 def prompt():
     pal = theme()
@@ -268,7 +282,9 @@ def main():
             break
         elif low in ("help", "?"):
             print(HELP)
-        elif low in ("character", "char", "sheet", "me", "stats"):
+        elif low in ("character", "sheet", "stats"):
+            character_view()
+        elif low in ("char", "me"):
             character()
         elif low in ("look", "l"):
             look()

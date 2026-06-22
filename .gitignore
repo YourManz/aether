@@ -15,3 +15,11 @@ bin/*
 *.palette
 hud.conf
 palette
+
+# Container build artifacts (rebuilt from container/ + the repo)
+base/
+dist/
+
+# visual-plan local scratch (the plan.mdx itself IS tracked)
+plan-blocks.md
+plans/*/.plan-url
