@@ -67,7 +67,7 @@ def theme():
 
 
 def hud_line():
-    xp = P.xp_from(P.load_deeds())
+    xp = P.xp_from(P.current_deeds())
     gold = P._read_int(P.GOLD_F, 0)
     mood = P._read(os.path.join(WORLD, "glade", "wraith", "mood")).strip() or "?"
     rel = os.path.relpath(state["cwd"], WORLD)
@@ -149,7 +149,7 @@ def reveal_substrate():
 
 # ── character sheet ───────────────────────────────────────────────────────
 def character():
-    deeds = P.load_deeds()
+    deeds = P.current_deeds()
     xp = P.xp_from(deeds)
     gold = P._read_int(P.GOLD_F, 0)
     spells = P.owned_spells()
@@ -230,11 +230,14 @@ def run(cmd):
 
 
 def tick(initial=False):
-    """Reconcile reality into progression: announce new deeds and level-ups."""
-    newly = P.reconcile()
+    """Reconcile reality into progression: announce new deeds, lapsed
+    world-states, and level-ups."""
+    new_acts, gained, lost = P.reconcile()
     if not initial:
-        for d in newly:
+        for d in new_acts + gained:
             print("  " + GR("✦ deed: " + P.deed_title(d)))
+        for d in lost:
+            print("  " + RE("✧ " + P.deed_lost_title(d)))
     delta, titles = P.claim_level_rewards()
     for lv in titles:
         print("  " + YE(BO(
