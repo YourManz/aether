@@ -1,0 +1,8 @@
+# Golden-rootfs package list (one per line, # comments ok).
+# Deliberately small: the game's whole point is that real coreutils ARE the
+# spells, so terminal garnish stays thin. `base` pulls NO kernel (correct for
+# a container) but includes shadow/coreutils/bash. App-level ANSI theming
+# (the ember regalia) does the heavy lifting, so the look needs no extra pkgs.
+base
+python
+figlet

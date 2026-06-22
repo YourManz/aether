@@ -1,0 +1,267 @@
+# Ship Aether as a self-contained, instantly-iterable container
+
+<RichText id="overview">
+
+### Objective
+
+Package the Aether world so it boots into a finished experience — autologin straight into the familiar, an RPG-flavoured terminal, and a full-screen character sheet with an ASCII portrait — while keeping the day-to-day edit/test loop **instant**: change a Python file on the host and re-run `./play` in the running container, with **no image rebuild, ever**.
+
+"Done" means three things hold:
+
+1. `make dev` boots a `systemd-nspawn` container that autologins as `player` and drops straight into the Glade; the host's `~/aether` is bind-mounted live, so editing `engine/familiar.py` on the host and re-running `./play` inside shows the change immediately.
+2. Typing `character` opens a full-screen `curses` sheet — ASCII portrait on the left, live stats/spellbook/deeds on the right, the wraith's state and XP bar updating in real time — and `q` returns to the world.
+3. `make image` bakes the current game into a copy of the golden rootfs and emits a single `dist/aether.tar.zst` — the shippable "one unit" — which boots with a writable overlay that doubles as the save/permadeath system.
+
+</RichText>
+
+<RichText id="key-insight-heading">
+
+### The architecture that removes the rebuild
+
+</RichText>
+
+<RichText id="key-insight">
+
+The pain you're avoiding — "recompress an ISO to test a change" — disappears once two artifacts that change at completely different rates are decoupled. The **golden base rootfs** (OS + terminal packages + autologin) changes rarely. The **game code** (`~/aether`) changes constantly. During development the game never lives *inside* the image: it's bind-mounted from the host, so the image is static and the code is live. The image is rebuilt only when a platform-level thing changes (a package, a default theme), and even then it's one `make` target, not a burn.
+
+</RichText>
+
+<Diagram
+  id="arch-diagram"
+  data={{
+    html: '<div class="diagram-grid" data-rough><div class="diagram-panel"><div class="diagram-muted">Dev loop — instant iterate</div><div class="diagram-card">Host repo<br/><span class="diagram-muted">~/aether · edit here</span></div><div class="diagram-pill">--bind &#8595; live</div><div class="diagram-card">Container /opt/aether<br/><span class="diagram-muted">./play · no rebuild</span></div><div class="diagram-node">Golden base rootfs &#183; immutable</div></div><div class="diagram-panel"><div class="diagram-muted">Release — the one unit</div><div class="diagram-card">base + baked /opt/aether</div><div class="diagram-pill">make image &#8595;</div><div class="diagram-card">dist/aether.tar.zst</div><div class="diagram-node">nspawn --volatile=overlay &#183; permadeath</div></div></div>',
+    css: '.diagram-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.diagram-panel{display:flex;flex-direction:column;gap:10px;padding:14px}.diagram-card,.diagram-node{padding:10px 12px;text-align:center}.diagram-pill{align-self:center}',
+    caption: 'One golden base rootfs, two ways to attach the game: bind-mounted live for dev, baked in for release.'
+  }}
+/>
+
+<Callout id="decision-runtime" tone="decision">
+
+**Runtime: `systemd-nspawn` container, not a VM.** It gives the full "OS-as-engine" model the game depends on — real PID 1, real processes (`river.py`/`wraith.py`), real permissions and signals — but boots in well under a second and rebuilds in one. Snapshots come from overlay/btrfs instead of qcow2. A full QEMU/KVM VM would add minutes of boot+image overhead per iteration for isolation this single-player game doesn't need.
+
+</Callout>
+
+<Callout id="decision-tui" tone="decision">
+
+**Character sheet: stdlib `curses`, not Textual.** Zero dependencies — it ships clean in the rootfs with nothing to `pip install`, and it renders perfectly on the bare container console. A full-screen ASCII-portrait + live-stats sheet is well within curses' reach; the only cost is slightly more manual layout code, which is a one-time write.
+
+</Callout>
+
+<RichText id="decision-distro">
+
+**Base distro: Arch (`pacstrap`).** It matches your host, you already run it, and — load-bearing for this game — its GNU coreutils are exactly the verbs the world assumes (`chmod`, `tail -f`, `ln -s`, `ps`, `kill`). Alpine's BusyBox variants differ in flags and would quietly change puzzle behaviour. The base meta-package pulls no kernel, which is correct for a container.
+
+</RichText>
+
+<RichText id="scope-heading">
+
+### Scope and non-goals
+
+</RichText>
+
+<RichText id="scope">
+
+**In scope:** the container build/run tooling (`container/` + a top-level `Makefile`), autologin + banner + theme config, the new `engine/sheet_tui.py` and `engine/art/`, a one-command release tarball, and the overlay-based save/permadeath model.
+
+**Non-goals (deferred):** a graphical desktop or windowed terminal emulator (the bare console is the surface); multi-player / networked realms (the README's `nc` remote realm stays future work); user-namespaced UID isolation during dev (off by default — see Risks); publishing the tarball anywhere. The game's own logic (`progress.py`, `init_world.py`, the daemons) is **not** rewritten — only `familiar.py` gains one branch to launch the TUI.
+
+</RichText>
+
+<RichText id="files-heading">
+
+### What gets added
+
+</RichText>
+
+<FileTree
+  id="files-added"
+  title="New + touched files (all under ~/aether)"
+  entries={[
+    { path: "Makefile", change: "added", note: "base / dev / image / play-image targets — the whole workflow." },
+    { path: "container/packages.txt", change: "added", note: "pacstrap package list: base python figlet + garnish." },
+    { path: "container/build.sh", change: "added", note: "pacstrap the golden rootfs, lay down the overlay configs." },
+    { path: "container/overlay/etc/systemd/system/console-getty.service.d/autologin.conf", change: "added", note: "autologin player on the nspawn console." },
+    { path: "container/overlay/home/player/.bash_profile", change: "added", note: "exec /opt/aether/play on console login; print the banner." },
+    { path: "container/overlay/etc/aether-banner.sh", change: "added", note: "figlet + lolcat title card shown once at login." },
+    { path: "engine/sheet_tui.py", change: "added", note: "full-screen curses character sheet, live-refreshing." },
+    { path: "engine/art/apprentice.txt", change: "added", note: "ASCII portrait; more per class/level later." },
+    { path: "engine/familiar.py", change: "modified", note: "`character` launches the TUI when on a tty; `char`/`me` keep the quick inline sheet." },
+    { path: "CONTAINER.md", change: "added", note: "build/run/iterate/release/permadeath runbook." }
+  ]}
+/>
+
+<RichText id="phase1-heading">
+
+### Phase 1 — Host prerequisites and the golden base rootfs
+
+</RichText>
+
+<RichText id="phase1">
+
+`systemd-nspawn` and `machinectl` already ship with `systemd` on Arch; the one extra host package is `arch-install-scripts` for `pacstrap`. The base is built once into a project-local directory (`base/`, git-ignored) so nothing pollutes system paths until you choose to register it.
+
+The package list stays deliberately small — the game's point is that real coreutils *are* the spells, so terminal garnish is a thin layer: `figlet` for the title card and a rainbow pipe for the banner. App-level ANSI theming (your existing `embertheme`) does the heavy lifting so the look survives on any console.
+
+</RichText>
+
+<Code
+  id="phase1-cmd"
+  language="bash"
+  filename="container/build.sh (core)"
+  caption="Bootstrap the immutable rootfs, then lay the overlay configs on top."
+  code={"sudo pacman -S --needed arch-install-scripts\n\n# Minimal rootfs — `base` pulls NO kernel (correct for a container).\nsudo pacstrap -c -K base/ base python figlet\n# rainbow pipe: lolcat (AUR) or fall back to `toilet --gay`; banner degrades to plain figlet if neither is present.\n\n# Player account at uid 1000 so it matches the host owner of the bind mount.\nsudo systemd-nspawn -D base/ useradd -m -u 1000 player\n\n# Overlay the autologin + banner + bash_profile onto the rootfs.\nsudo cp -a container/overlay/. base/\n"}
+/>
+
+<RichText id="phase2-heading">
+
+### Phase 2 — RPG terminal: autologin → straight into the world
+
+</RichText>
+
+<RichText id="phase2">
+
+An nspawn `--boot` container runs systemd as PID 1 and presents a login on `/dev/console`, served by `console-getty.service`. A drop-in makes that console autologin as `player`; `player`'s `.bash_profile` prints the banner once and `exec`s `./play`, guarding against re-entry so a nested shell doesn't loop. Boot the container and you are standing in the Glade with no prompt.
+
+</RichText>
+
+<AnnotatedCode
+  id="phase2-code"
+  filename="container/overlay (two files)"
+  language="ini"
+  code={"# console-getty.service.d/autologin.conf\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin player --noclear - $TERM\n\n# ---- /home/player/.bash_profile ----\n# Only seize the real console login, never a nested shell.\ncase \"$(tty)\" in\n  /dev/console|/dev/pts/0)\n    [ -z \"$AETHER_IN\" ] && AETHER_IN=1 \\\n      && bash /etc/aether-banner.sh \\\n      && exec /opt/aether/play ;;\nesac"}
+  annotations={[
+    { lines: "2-5", label: "Autologin", note: "Blank ExecStart= then re-set is required to override the unit's original line." },
+    { lines: "9-14", label: "Drop into play", note: "AETHER_IN guard stops a recursive familiar-in-familiar loop; falls through to a normal shell elsewhere (e.g. machinectl shell for debugging)." }
+  ]}
+/>
+
+<RichText id="phase3-heading">
+
+### Phase 3 — The full-screen curses character sheet
+
+</RichText>
+
+<RichText id="phase3">
+
+`engine/sheet_tui.py` reuses everything `progress.py` already exposes — `current_deeds()`, `xp_from()`, `bar()`, `owned_spells()`, `spell_desc()`, `owned_regalia()`, `level_for()` — so the TUI is pure presentation with no new game logic. It draws a two-pane full-screen layout: an ASCII portrait (loaded from `engine/art/`, chosen by current level/class) on the left, and live stats — XP bar, attributes, spellbook with self-documented descriptions, regalia, deeds, and current wraith mood — on the right. A short input timeout makes it re-read state every second, so calming the wraith or routing the river updates the sheet in real time. `q` exits back to the familiar.
+
+In `familiar.py`, the existing `character` command branches: on a real tty it calls `curses.wrapper(sheet_tui.run)`; otherwise (piped/non-interactive, as in the smoke tests) it falls back to the current inline `character()` text sheet. `char` and `me` stay mapped to the quick inline sheet for a no-clear glance.
+
+</RichText>
+
+<AnnotatedCode
+  id="phase3-code"
+  filename="engine/sheet_tui.py (skeleton)"
+  language="python"
+  code={"import curses, os, time\nimport progress as P\n\nART = os.path.join(os.path.dirname(__file__), \"art\")\n\ndef _portrait(level):\n    name = {1: \"apprentice\"}.get(level, \"apprentice\") + \".txt\"\n    try:\n        return open(os.path.join(ART, name)).read().splitlines()\n    except OSError:\n        return [\"( no portrait )\"]\n\ndef run(scr):\n    curses.curs_set(0)\n    scr.timeout(1000)            # re-read the world every second\n    while True:\n        deeds = P.current_deeds()\n        xp = P.xp_from(deeds)\n        lvl = P.level_for(xp)\n        scr.erase()\n        _draw_portrait(scr, _portrait(lvl[0]))\n        _draw_stats(scr, lvl, xp, deeds)   # bar, arcana, spellbook, deeds, wraith mood\n        scr.refresh()\n        if scr.getch() in (ord(\"q\"), 27):  # q / ESC\n            return"}
+  annotations={[
+    { lines: "2", label: "Reuse, not reinvent", note: "Every datum comes from the existing progress.py API — the TUI adds no state." },
+    { lines: "16", label: "Live refresh", note: "1s timeout means the sheet reflects the wraith calming or the Hollow opening while you watch." },
+    { lines: "21-23", label: "Clean exit", note: "curses.wrapper restores the terminal; control returns to the familiar loop." }
+  ]}
+/>
+
+<RichText id="phase4-heading">
+
+### Phase 4 — The dev loop (the part that never rebuilds)
+
+</RichText>
+
+<RichText id="phase4">
+
+`make dev` boots the rootfs with the host repo bind-mounted at `/opt/aether`. Because the world is plain Python read fresh on each `./play`, "test a change" is just: edit on the host, then re-run `./play` inside — or wrap it with `watchexec -r ./play` to auto-relaunch on save. Nothing is compiled, packed, or rebuilt.
+
+One consequence to know: during dev, the game's own writes (`world/`, `state/`) land on the **host** repo through the bind mount — which is exactly what you want while building (persistent, inspectable, git-ignored already). The throwaway/permadeath behaviour belongs to the *release* run in Phase 5, not the dev loop.
+
+</RichText>
+
+<Code
+  id="phase4-cmd"
+  language="bash"
+  filename="Makefile (dev target)"
+  caption="Boot the container with the live game bind-mounted. uid parity keeps chmod gameplay honest."
+  code={"dev:\n\tsudo systemd-nspawn -b -D base/ \\\n\t  --bind=$(HOME)/aether:/opt/aether \\\n\t  --hostname=aether\n# Edit ~/aether on the host -> inside the container: ./play  (or: watchexec -r ./play)\n# No --private-users: container uid 1000 == host uid 1000, so file ownership\n# and permission puzzles behave identically on both sides of the mount.\n"}
+/>
+
+<RichText id="phase5-heading">
+
+### Phase 5 — Release as one unit, and the permadeath overlay
+
+</RichText>
+
+<RichText id="phase5">
+
+`make image` copies the current `~/aether` into a build copy of the rootfs at `/opt/aether` and tars it to `dist/aether.tar.zst` — a single file someone can `machinectl import-tar` and boot. That's the shippable "one unit."
+
+The save/permadeath model the README sketches falls out of nspawn's overlay options for free. The shipped image **defaults to a persistent overlay**, so an ordinary boot keeps your progress across reboots — the gentler default — and permadeath is a deliberate opt-in:
+
+- **Default (persistent) run** — `make play-image` boots the immutable base under a persistent overlay directory; looted chests, learned spells, and a calmed wraith survive shutdown. Copy the overlay (or `machinectl clone`) for a save slot.
+- **Permadeath run** — pass `--volatile=overlay` to boot under a tmpfs overlay instead; every write is discarded on shutdown, so death = reboot and the world resets pristine. `rm -rf` the persistent overlay to die for real.
+
+This is why the artifact is a `tar.zst`/rootfs and not an ISO: the writable overlay *is* the game state, and it's the same mechanism that makes dev never need a rebuild.
+
+</RichText>
+
+<Table
+  id="make-targets"
+  columns={["Target", "Runs", "Frequency", "Produces"]}
+  rows={[
+    ["make base", "pacstrap + overlay configs", "once / on package change", "base/ golden rootfs"],
+    ["make dev", "nspawn + bind-mount host repo", "every iteration", "live container, instant edits"],
+    ["make image", "bake repo into rootfs, tar", "on release", "dist/aether.tar.zst (one unit)"],
+    ["make play-image", "boot baked image, persistent overlay", "to play for real", "save-persisting session (permadeath = opt-in flag)"]
+  ]}
+/>
+
+<RichText id="risks-heading">
+
+### Risks and how they're handled
+
+</RichText>
+
+<Callout id="risk-uid" tone="warning">
+
+**Permission parity across the bind mount.** The whole game is built on real `chmod` semantics, so the container's `player` must be **uid 1000** to match the host owner of `~/aether`, and dev must run **without** `--private-users` (which would remap uids and break ownership on the mount). Release images can opt into user-namespacing for isolation since they bake the code in. This is called out in `build.sh` and the `dev` target.
+
+</Callout>
+
+<Callout id="risk-root" tone="risk">
+
+**`pacstrap` and `systemd-nspawn -b` need root.** `make base`, `make dev`, and `make image` use `sudo`. This is expected for container tooling; the targets are explicit about it. No rootless path is attempted in this cut.
+
+</Callout>
+
+<Callout id="risk-lolcat" tone="info">
+
+**The rainbow pipe is optional garnish.** `lolcat` lives in the AUR; the banner script degrades gracefully to `toilet --gay` and then to plain `figlet` if neither is installed, so a fresh `pacstrap` never produces a broken login. The RPG *feel* comes mostly from app-level ANSI theming, which has no package dependency.
+
+</Callout>
+
+<RichText id="verify-heading">
+
+### Verification — an end-to-end smoke
+
+</RichText>
+
+<RichText id="verify">
+
+Beyond byte-compiling the new module, the acceptance run exercises the real journey:
+
+1. `make base` then `make dev` — the container boots and **autologins straight into the Glade** (no login prompt), confirming Phases 1–2.
+2. Inside: `character` opens the **full-screen curses sheet** with the ASCII portrait; route the river (`ln -sf ../river world/glade/wraith/feed`), watch the wraith mood and XP bar **update live** on the sheet, then `q` back — confirming Phase 3 and that the live-state deed model drives the TUI.
+3. On the host, edit a string in `engine/familiar.py`, then re-run `./play` inside the **same** running container — the change shows **without any rebuild**, confirming Phase 4.
+4. `make image` then `make play-image` (persistent default); loot the chest, reboot, and assert it is **still looted** — progress survives. Then reboot once with `--volatile=overlay` and assert the chest is **barred again** — confirming both the persistent default and the permadeath opt-in, and that the tarball is a self-contained unit.
+
+</RichText>
+
+<RichText id="decisions-settled-heading">
+
+### Decisions settled
+
+</RichText>
+
+<RichText id="decisions-settled">
+
+The three direction calls are made and baked into the plan above: the golden base rootfs lives in a **project-local, git-ignored `base/`** (self-contained in `~/aether`, nothing in system paths, trivial to nuke and rebuild); the shipped image **defaults to a persistent overlay** so progress survives reboots, with permadeath as an opt-in `--volatile=overlay` flag; and the first cut ships **one ASCII portrait** (`apprentice.txt`) with the per-level lookup wired but the remaining portraits deferred. No open questions remain — the plan is ready to build on approval.
+
+</RichText>
