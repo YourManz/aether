@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Enter the Aether. Builds the world if needed, breathes life into it
+# (the river and the wraith run as real processes), then hands you the
+# familiar. On exit, the daemons are laid to rest.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export AETHER_HOME="$ROOT"
+
+python3 "$ROOT/engine/init_world.py"
+
+python3 "$ROOT/engine/river.py"  & RIVER_PID=$!
+python3 "$ROOT/engine/wraith.py" & WRAITH_PID=$!
+
+cleanup() { kill "$RIVER_PID" "$WRAITH_PID" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+python3 "$ROOT/engine/familiar.py"

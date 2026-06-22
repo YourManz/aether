@@ -1,0 +1,17 @@
+# Runtime world state — regenerated idempotently by engine/init_world.py
+world/
+state/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Regalia / spells purchased or installed at play-time land in bin/;
+# only the shop itself is tracked.
+bin/*
+!bin/grimoire
+
+# Player-installed regalia configs
+*.palette
+hud.conf
+palette

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# grimoire — the wandering merchant, in the shape of a package manager.
+# Spend gold to install spells (real scripts onto your PATH) or regalia
+# (cosmetic packages that re-skin your familiar — installed like real plugins:
+# a config file the program loads). Built so it can later proxy to pip/apt/npm.
+set -euo pipefail
+
+ROOT="${AETHER_HOME:?the grimoire needs AETHER_HOME set}"
+BIN="$ROOT/bin"
+STATE="$ROOT/state"
+GOLD_F="$STATE/gold"
+REGALIA="$STATE/regalia"
+
+mkdir -p "$BIN" "$STATE" "$REGALIA"
+[ -f "$GOLD_F" ] || echo 0 > "$GOLD_F"
+
+gold()     { cat "$GOLD_F" 2>/dev/null || echo 0; }
+set_gold() { echo "$1" > "$GOLD_F"; }
+
+spells() {
+  cat <<'EOF'
+lantern|10|reveal what is hidden in a place (shows dotfiles)
+prism|20|split a living stream two ways at once (a tee, by another name)
+EOF
+}
+regalia() {
+  cat <<'EOF'
+hud|15|a heads-up band above your prompt: level, gold, place, wraith
+embertheme|10|recolour your sight in warm ember tones, with a sigil
+EOF
+}
+
+price_of() { { spells; regalia; } | awk -F'|' -v n="$1" '$1==n{print $2}'; }
+kind_of()  {
+  spells  | grep -q "^$1|" && { echo spell;   return; }
+  regalia | grep -q "^$1|" && { echo regalia; return; }
+  echo ""
+}
+
+install_spell() {
+  case "$1" in
+    lantern) cat > "$BIN/lantern" <<'EOF'
+#!/usr/bin/env bash
+# Lantern — hold it up and the hidden shows itself.
+ls -la --color=never "${1:-.}"
+EOF
+    ;;
+    prism) cat > "$BIN/prism" <<'EOF'
+#!/usr/bin/env bash
+# Prism — let a current pass through you while it also flows onward (a tee).
+exec tee "$@"
+EOF
+    ;;
+  esac
+  chmod +x "$BIN/$1"
+}
+
+install_regalia() {
+  local d="$REGALIA/$1"
+  mkdir -p "$d"
+  case "$1" in
+    hud) echo "enabled" > "$d/enabled" ;;
+    embertheme) cat > "$d/palette" <<'EOF'
+accent=33
+sigil=✦
+name=Ember
+EOF
+    ;;
+  esac
+}
+
+cmd="${1:-list}"
+case "$cmd" in
+  ""|list|ls)
+    echo "  The merchant spreads a cloth. You hold $(gold) gold."
+    echo
+    echo "  SPELLS  (real tools, onto your PATH)"
+    spells | while IFS='|' read -r name price desc; do
+      owned=""; [ -x "$BIN/$name" ] && owned="  ✓"
+      printf "    %-12s %3sg  %s%s\n" "$name" "$price" "$desc" "$owned"
+    done
+    echo
+    echo "  REGALIA  (re-skin your familiar)"
+    regalia | while IFS='|' read -r name price desc; do
+      owned=""; [ -d "$REGALIA/$name" ] && owned="  ✓"
+      printf "    %-12s %3sg  %s%s\n" "$name" "$price" "$desc" "$owned"
+    done
+    echo
+    echo "  buy:  grimoire buy <name>"
+    ;;
+  buy)
+    name="${2:-}"
+    [ -n "$name" ] || { echo "buy what? try: grimoire list" >&2; exit 1; }
+    kind="$(kind_of "$name")"
+    [ -n "$kind" ] || { echo "The merchant shrugs — no '$name' here." >&2; exit 1; }
+    price="$(price_of "$name")"
+    have="$(gold)"
+    if [ "$have" -lt "$price" ]; then
+      echo "Not enough gold. '$name' costs $price; you hold $have." >&2
+      exit 1
+    fi
+    if [ "$kind" = spell ]; then
+      install_spell "$name"
+      msg="You learn '$name'. Whisper it anywhere."
+    else
+      install_regalia "$name"
+      msg="You don the '$name'. Your sight shifts."
+    fi
+    set_gold "$((have - price))"
+    echo "$msg ($price gold spent, $(gold) remains.)"
+    ;;
+  gold)
+    echo "$(gold) gold."
+    ;;
+  *)
+    echo "grimoire: list | buy <name> | gold" >&2
+    exit 1
+    ;;
+esac
