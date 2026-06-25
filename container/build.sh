@@ -18,6 +18,7 @@ fi
 
 echo ">> pacstrap $BASE"
 echo "   packages: $PKGS"
+sudo mkdir -p "$BASE"   # pacstrap requires the target root to already exist
 sudo pacstrap -c -K "$BASE" $PKGS
 
 echo ">> player account (uid 1000 — matches the host owner of the bind mount)"
